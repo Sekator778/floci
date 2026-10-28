@@ -683,6 +683,17 @@ one Resources member must be defined.` `CreateStackSet` and `UpdateStackSet` ref
 holding a `null` before the stack set keeps it, with the same message followed by the service
 exception's details, as on AWS.
 
+## Properties and `AWS::NoValue`
+
+A property, object member or list item given as `!Ref AWS::NoValue`, directly or as the branch an
+`Fn::If` picks, is removed before the resource is provisioned, on create, update and change sets,
+nested stacks and custom resources included, so it behaves as if the template left it out.
+
+A resource type can accept a writable property from the registry schema and never read it. Those
+properties are listed with the reason in `src/test/resources/cloudformation/writable-property-gaps.tsv`.
+`CfnSchemaCoverageTest` fails when a writable property is neither read nor listed, and when a listed
+property has started to be read, so closing a gap deletes its row.
+
 ## Template URLs
 
 A `TemplateURL` names an object in Floci's S3, virtual-hosted or path-style. As on AWS, one whose
