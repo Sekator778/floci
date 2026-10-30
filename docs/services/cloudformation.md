@@ -691,8 +691,9 @@ nested stacks and custom resources included, so it behaves as if the template le
 
 A resource type can accept a writable property from the registry schema and never read it. Those
 properties are listed with the reason in `src/test/resources/cloudformation/writable-property-gaps.tsv`.
-`CfnSchemaCoverageTest` fails when a writable property is neither read nor listed, and when a listed
-property has started to be read, so closing a gap deletes its row.
+Where the registry schema corpus is present under `local/aws/cfn-resource-schemas/us-east-1/`
+(gitignored, so not in CI), `CfnSchemaCoverageTest` fails when a writable property is neither read
+nor listed, and when a listed property has started to be read, so closing a gap deletes its row.
 
 ## Template URLs
 

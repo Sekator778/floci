@@ -191,8 +191,8 @@ class CfnSchemaCoverageTest {
         assertSameLines(render(recordedPropertyGaps()), render(actualPropertyGaps()),
                 "The set of ignored writable schema properties changed.",
                 "(a provisioner stopped reading a declared property, or a new type arrived with one "
-                        + "it ignores) — read it, or add a row with a reason to " + PROPERTY_GAPS,
-                "(now read) — delete their rows from " + PROPERTY_GAPS);
+                        + "it ignores): read it, or add a row with a reason to " + PROPERTY_GAPS,
+                "(now read): delete their rows from " + PROPERTY_GAPS);
     }
 
     /** A property a provisioner now reads must lose its row rather than keep claiming to be ignored. */
@@ -712,8 +712,8 @@ class CfnSchemaCoverageTest {
         assertSameLines(recorded, actual,
                 "The set of unset schema attributes changed.",
                 "(a provisioner stopped setting a declared attribute, or a new type arrived with one "
-                        + "unset) — set them, or add a row with a reason to " + GAPS,
-                "(now set) — delete their rows from " + GAPS);
+                        + "unset): set them, or add a row with a reason to " + GAPS,
+                "(now set): delete their rows from " + GAPS);
     }
 
     private static void assertSameLines(String recorded, String actual, String headline,
