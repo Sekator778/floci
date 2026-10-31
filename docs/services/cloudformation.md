@@ -695,6 +695,15 @@ Where the registry schema corpus is present under `local/aws/cfn-resource-schema
 (gitignored, so not in CI), `CfnSchemaCoverageTest` fails when a writable property is neither read
 nor listed, and when a listed property has started to be read, so closing a gap deletes its row.
 
+On AppSync resources, a property the previous template declared and the new template drops is cleared
+on `UpdateStack`; one the stack never declared keeps the value set outside it. A few members go back to
+their create default (`XrayEnabled`, `AdditionalAuthenticationProviders`, a function's `FunctionVersion`,
+a resolver's `Kind`). Not cleared: the identifiers, `Tags` and `EnvironmentVariables`, which the
+provisioner already drives to the template, required members (`AuthenticationType`, `Type`, a function's
+`DataSourceName`), create-only members, an API key's `Expires`, a GraphQL API's `ApiType` and
+`Visibility`, and a UNIT resolver's `DataSourceName`. Other services follow
+[#6606](https://github.com/floci-io/floci/issues/6606).
+
 ## Template URLs
 
 A `TemplateURL` names an object in Floci's S3, virtual-hosted or path-style. As on AWS, one whose
