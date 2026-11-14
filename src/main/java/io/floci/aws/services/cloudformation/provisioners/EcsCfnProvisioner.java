@@ -390,13 +390,13 @@ public class EcsCfnProvisioner implements CfnResourceProvisioner {
     }
 
     /**
-     * The update that puts {@code prior} back on what {@code update} changed: its task definition,
-     * desired count and network configuration, and each setting the update declared. A capacity
-     * provider strategy or service registries the service did not have are put back empty, so a
-     * registry the update added is deregistered; a setting the update left unchanged is left
-     * unchanged again, so the restore rolls no deployment for registries nobody touched. The
-     * deployment configuration is not here: updateService cannot put back none, so the caller
-     * restores it exactly through replaceServiceDeploymentConfiguration.
+     * The update that puts {@code prior} back on what {@code update} changed: its task definition
+     * and network configuration, and each setting the update declared, the desired count among
+     * them. A capacity provider strategy or service registries the service did not have are put
+     * back empty, so a registry the update added is deregistered; a setting the update left
+     * unchanged is left unchanged again, so the restore rolls no deployment for registries nobody
+     * touched. The deployment configuration is not here: updateService cannot put back none, so
+     * the caller restores it exactly through replaceServiceDeploymentConfiguration.
      */
     private static UpdateServiceRequest restoreRequest(UpdateServiceRequest update, EcsServiceModel prior) {
         UpdateServiceRequest restore = new UpdateServiceRequest();
