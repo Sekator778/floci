@@ -102,16 +102,20 @@ class CloudWatchDashboardCfnProvisionerTest {
     }
 
     private StackResource provision(String json, String priorPhysicalId) {
-        return provision(json, priorPhysicalId, Map.of());
+        return provisionWithContext(json, namedContext(priorPhysicalId));
     }
 
-    /** Provisions as a create (no prior id) or an update (prior id and the attributes it left). */
-    private StackResource provision(String json, String priorPhysicalId, Map<String, String> priorAttributes) {
+    private ProvisionContext namedContext(String priorPhysicalId) {
+        JsonNode previous = priorPhysicalId == null ? null
+                : MAPPER.createObjectNode().put("DashboardName", priorPhysicalId).put("DashboardBody", "{}");
+        return new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, priorPhysicalId, event -> {}, previous);
+    }
+
+    /** Provisions as a create (no prior id) or an update (prior id and template properties). */
+    private StackResource provisionWithContext(String json, ProvisionContext context) {
         StackResource r = resource();
-        r.setPhysicalId(priorPhysicalId);
-        r.getAttributes().putAll(priorAttributes);
-        provisioner.provision(r, props(json),
-                new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, priorPhysicalId));
+        r.setPhysicalId(context.priorPhysicalId());
+        provisioner.provision(r, props(json), context);
         return r;
     }
 
@@ -128,8 +132,7 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         verify(dashboards).putDashboard("ops", BODY, Map.of(), REGION);
         assertEquals("ops", r.getPhysicalId(), "Ref is the dashboard name");
-        assertEquals(Map.of("FlociDashboardNameMode", "explicit"), r.getAttributes(),
-                "the schema declares no Fn::GetAtt attributes; only the name mode is recorded");
+        assertEquals(Map.of(), r.getAttributes(), "the schema declares no Fn::GetAtt attributes");
         assertFalse(provisioner.hasReplacementUpdate(r));
     }
 
@@ -146,19 +149,24 @@ class CloudWatchDashboardCfnProvisionerTest {
 
     @Test
     void anUnnamedDashboardGetsAGeneratedNameThatLaterUpdatesKeep() {
-        StackResource created = provision("""
+        String previous = """
                 {"DashboardBody": "{}"}
-                """, null);
+                """;
+        StackResource created = provision(previous, null);
         String generated = created.getPhysicalId();
         assertTrue(generated.startsWith("my-stack-Dashboard-"), generated);
+        ProvisionContext context = new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, generated,
+                event -> {}, props(previous));
 
-        StackResource updated = provision("""
+        StackResource updated = provisionWithContext("""
                 {"DashboardBody": "{\\"widgets\\":[]}"}
-                """, generated, created.getAttributes());
+                """, context);
 
         assertEquals(generated, updated.getPhysicalId(), "an unnamed dashboard keeps its name across updates");
         verify(dashboards).putDashboard(generated, "{\"widgets\":[]}", Map.of(), REGION);
         assertFalse(provisioner.hasReplacementUpdate(updated));
+        assertEquals(Map.of(), created.getAttributes());
+        assertFalse(updated.getAttributes().containsKey("FlociDashboardNameMode"));
     }
 
     @Test
@@ -289,13 +297,43 @@ class CloudWatchDashboardCfnProvisionerTest {
     void droppingAnExplicitNameReplacesTheDashboardWithAGeneratedOne() {
         StackResource r = provision("""
                 {"DashboardBody": "{}"}
-                """, "ops", Map.of("FlociDashboardNameMode", "explicit"));
+                """, "ops");
 
         assertTrue(r.getPhysicalId().startsWith("my-stack-Dashboard-"), r.getPhysicalId());
         verify(dashboards).putDashboard(eq(r.getPhysicalId()), eq("{}"), anyMap(), eq(REGION));
         assertTrue(provisioner.hasReplacementUpdate(r));
         assertEquals("ops", provisioner.updateCleanupPhysicalId(r));
-        assertEquals("generated", r.getAttributes().get("FlociDashboardNameMode"));
+        assertFalse(r.getAttributes().containsKey("FlociDashboardNameMode"));
+        verify(dashboards, never()).deleteDashboards(anyList(), anyString());
+
+        UpdateCleanupResult result = provisioner.completeUpdate(r);
+
+        assertTrue(result.applicable());
+        assertTrue(result.complete());
+        verify(dashboards).deleteDashboards(List.of("ops"), REGION);
+        assertFalse(provisioner.hasReplacementUpdate(r));
+    }
+
+    @Test
+    void aReplacingUpdateCannotKeepThePriorDashboardName() {
+        StackResource r = resource();
+        r.setPhysicalId("ops");
+        JsonNode previous = props("""
+                {"DashboardName": "previous", "DashboardBody": "{}"}
+                """);
+        ProvisionContext context = new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, "ops",
+                event -> {}, previous);
+
+        AwsException error = assertThrows(AwsException.class, () -> provisioner.provision(r, props("""
+                {"DashboardName": "ops", "DashboardBody": "{}"}
+                """), context));
+
+        assertEquals("ValidationError", error.getErrorCode());
+        assertEquals("CloudFormation cannot update a stack when a custom-named resource requires replacing. "
+                + "Rename ops and update the stack again.", error.getMessage());
+        assertEquals("ops", r.getPhysicalId());
+        assertFalse(provisioner.hasReplacementUpdate(r));
+        verifyNoInteractions(dashboards);
     }
 
     /**
@@ -376,7 +414,7 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         StackResource r = provision("""
                 {"DashboardName": "ops", "DashboardBody": "{}", "Tags": [{"Key": "env", "Value": "dev"}]}
-                """, "ops", Map.of("FlociDashboardNameMode", "explicit"));
+                """, "ops");
         assertTrue(r.getAttributes().containsKey(CfnRollback.DASHBOARD_UPDATE_SNAPSHOT_ATTR));
         when(dashboards.listTagsForResource(arn("ops"), REGION)).thenReturn(Map.of("env", "dev"));
 
@@ -394,7 +432,7 @@ class CloudWatchDashboardCfnProvisionerTest {
     void aFailedRestoreKeepsTheSnapshot() {
         StackResource r = provision("""
                 {"DashboardName": "ops", "DashboardBody": "{}"}
-                """, "ops", Map.of("FlociDashboardNameMode", "explicit"));
+                """, "ops");
         doThrow(new AwsException("InternalServiceError", "boom", 500))
                 .when(dashboards).putDashboard(eq("ops"), eq("{}"), anyMap(), eq(REGION));
 
@@ -411,7 +449,7 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         StackResource r = provision("""
                 {"DashboardName": "ops", "DashboardBody": "{}"}
-                """, "ops", Map.of("FlociDashboardNameMode", "explicit"));
+                """, "ops");
 
         assertTrue(provisioner.rollbackUpdate(r));
         verify(dashboards).deleteDashboards(List.of("ops"), REGION);
@@ -422,7 +460,7 @@ class CloudWatchDashboardCfnProvisionerTest {
     void aCommittedUpdateDropsTheSnapshot() {
         StackResource r = provision("""
                 {"DashboardName": "ops", "DashboardBody": "{}"}
-                """, "ops", Map.of("FlociDashboardNameMode", "explicit"));
+                """, "ops");
 
         provisioner.clearUpdate(r);
 
@@ -441,7 +479,7 @@ class CloudWatchDashboardCfnProvisionerTest {
         r.setPhysicalId("ops");
         assertThrows(AwsException.class, () -> provisioner.provision(r, props("""
                 {"DashboardName": "ops-v2", "DashboardBody": "not json"}
-                """), new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, "ops")));
+                """), namedContext("ops")));
 
         assertTrue(provisioner.rollbackUpdate(r));
         verify(dashboards, never()).deleteDashboards(anyList(), anyString());
@@ -463,7 +501,7 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         assertThrows(AwsException.class, () -> provision("""
                 {"DashboardName": "ops", "DashboardBody": "{}", "Tags": [{"Key": "env", "Value": "dev"}]}
-                """, "ops", Map.of("FlociDashboardNameMode", "explicit")));
+                """, "ops"));
 
         verify(dashboards).putDashboard("ops", OLD_BODY, Map.of("team", "platform"), REGION);
     }
@@ -480,10 +518,9 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         StackResource r = resource();
         r.setPhysicalId("ops");
-        r.getAttributes().put("FlociDashboardNameMode", "explicit");
         assertThrows(AwsException.class, () -> provisioner.provision(r, props("""
                 {"DashboardName": "ops", "DashboardBody": "{}", "Tags": [{"Key": "env", "Value": "dev"}]}
-                """), new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, "ops")));
+                """), namedContext("ops")));
 
         assertEquals("true", r.getAttributes().get(CfnRollback.UPDATE_ROLLBACK_RESTORED_ATTR));
         assertFalse(r.getAttributes().containsKey(CfnRollback.DASHBOARD_UPDATE_SNAPSHOT_ATTR),
@@ -512,11 +549,10 @@ class CloudWatchDashboardCfnProvisionerTest {
         when(dashboards.listTagsForResource(arn("ops"), REGION)).thenReturn(Map.of("team", "platform"));
         doThrow(new AwsException("InternalServiceError", "boom", 500))
                 .when(dashboards).untagResource(arn("ops"), List.of("team"), REGION);
-        r.getAttributes().put("FlociDashboardNameMode", "explicit");
 
         assertThrows(AwsException.class, () -> provisioner.provision(r, props("""
                 {"DashboardName": "ops", "DashboardBody": "{}", "Tags": [{"Key": "env", "Value": "dev"}]}
-                """), new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, "ops")));
+                """), namedContext("ops")));
 
         verify(dashboards).putDashboard(eq("ops"), eq(OLD_BODY), anyMap(), eq(REGION));
         assertEquals("true", r.getAttributes().get(CfnRollback.UPDATE_ROLLBACK_RESTORED_ATTR));
@@ -541,10 +577,9 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         StackResource r = resource();
         r.setPhysicalId("ops");
-        r.getAttributes().put("FlociDashboardNameMode", "explicit");
         AwsException thrown = assertThrows(AwsException.class, () -> provisioner.provision(r, props("""
                 {"DashboardName": "ops", "DashboardBody": "{}", "Tags": [{"Key": "env", "Value": "dev"}]}
-                """), new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, "ops")));
+                """), namedContext("ops")));
 
         assertEquals("boom", thrown.getMessage(), "the original failure is what the stack reports");
         assertTrue(r.getAttributes().containsKey(CfnRollback.UPDATE_ROLLBACK_FAILURE_ATTR));
@@ -570,10 +605,9 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         StackResource r = resource();
         r.setPhysicalId("ops");
-        r.getAttributes().put("FlociDashboardNameMode", "explicit");
         AwsException thrown = assertThrows(AwsException.class, () -> provisioner.provision(r, props("""
                 {"DashboardName": "ops", "DashboardBody": "{}", "Tags": [{"Key": "team", "Value": "data"}]}
-                """), new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, "ops")));
+                """), namedContext("ops")));
 
         assertSame(persistent, thrown);
         assertEquals(0, thrown.getSuppressed().length);
@@ -592,7 +626,7 @@ class CloudWatchDashboardCfnProvisionerTest {
 
         assertThrows(AwsException.class, () -> provisioner.provision(r, props("""
                 {"DashboardName": "ops-v2", "DashboardBody": "not json"}
-                """), new ProvisionContext(engine, REGION, ACCOUNT_ID, STACK, "ops")));
+                """), namedContext("ops")));
 
         assertEquals("ops", r.getPhysicalId());
         assertFalse(provisioner.hasReplacementUpdate(r));
