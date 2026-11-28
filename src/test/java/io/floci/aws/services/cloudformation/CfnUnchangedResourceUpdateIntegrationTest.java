@@ -1,8 +1,11 @@
 package io.floci.aws.services.cloudformation;
 
+import io.floci.aws.core.common.RequestScopes;
 import io.floci.aws.core.common.XmlParser;
+import io.floci.aws.services.ecr.registry.EcrRegistryManager;
 import io.floci.aws.testing.CfnStackWaits;
 import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -42,6 +45,9 @@ class CfnUnchangedResourceUpdateIntegrationTest {
             "AWS4-HMAC-SHA256 Credential=test/20260808/us-west-2/cloudformation/aws4_request";
     private static final String SQS_AUTH =
             "AWS4-HMAC-SHA256 Credential=test/20260808/us-west-2/sqs/aws4_request";
+
+    @Inject
+    EcrRegistryManager registryManager;
 
     private static String stackWith(String namedResourceJson, String queueName) {
         return """
@@ -513,6 +519,7 @@ class CfnUnchangedResourceUpdateIntegrationTest {
 
     @Test
     void ecrRepository() {
+        RequestScopes.runAs(null, "us-west-2", registryManager::tryEnsureStarted);
         assertUnchangedResourceSurvivesUpdate("ecr", """
                 "Named": {
                   "Type": "AWS::ECR::Repository",
